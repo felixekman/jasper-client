@@ -1,22 +1,21 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8-*-
 import unittest
-from urllib2 import URLError, urlopen
-import yaml
-from test_mic import Mic
-from modules import *
+from client import test_mic, diagnose, jasperpath
+from client.modules import Life, Joke, Time, Gmail, HN, News, Weather
 
-
-def activeInternet():
-    try:
-        urlopen('http://www.google.com', timeout=1)
-        return True
-    except URLError:
-        return False
+DEFAULT_PROFILE = {
+    'prefers_email': False,
+    'location': 'Cape Town',
+    'timezone': 'US/Eastern',
+    'phone_number': '012344321'
+}
 
 
 class TestModules(unittest.TestCase):
 
     def setUp(self):
-        self.profile = yaml.safe_load(open("profile.yml", "r"))
+        self.profile = DEFAULT_PROFILE
         self.send = False
 
     def runConversation(self, query, inputs, module):
@@ -30,7 +29,7 @@ class TestModules(unittest.TestCase):
         The server's responses, in a list.
         """
         self.assertTrue(module.isValid(query))
-        mic = Mic(inputs)
+        mic = test_mic.Mic(inputs)
         module.handle(query, mic, self.profile)
         return mic.outputs
 
@@ -46,7 +45,7 @@ class TestModules(unittest.TestCase):
         inputs = ["Who's there?", "Random response"]
         outputs = self.runConversation(query, inputs, Joke)
         self.assertEqual(len(outputs), 3)
-        allJokes = open("JOKES.txt", "r").read()
+        allJokes = open(jasperpath.data('text', 'JOKES.txt'), 'r').read()
         self.assertTrue(outputs[2] in allJokes)
 
     def testTime(self):
@@ -54,17 +53,19 @@ class TestModules(unittest.TestCase):
         inputs = []
         self.runConversation(query, inputs, Time)
 
-    @unittest.skipIf(not activeInternet(), "No internet connection")
+    @unittest.skipIf(not diagnose.check_network_connection(),
+                     "No internet connection")
     def testGmail(self):
         key = 'gmail_password'
-        if not key in self.profile or not self.profile[key]:
+        if key not in self.profile or not self.profile[key]:
             return
 
         query = "Check my email"
         inputs = []
         self.runConversation(query, inputs, Gmail)
 
-    @unittest.skipIf(not activeInternet(), "No internet connection")
+    @unittest.skipIf(not diagnose.check_network_connection(),
+                     "No internet connection")
     def testHN(self):
         query = "find me some of the top hacker news stories"
         if self.send:
@@ -74,7 +75,8 @@ class TestModules(unittest.TestCase):
         outputs = self.runConversation(query, inputs, HN)
         self.assertTrue("front-page articles" in outputs[1])
 
-    @unittest.skipIf(not activeInternet(), "No internet connection")
+    @unittest.skipIf(not diagnose.check_network_connection(),
+                     "No internet connection")
     def testNews(self):
         query = "find me some of the top news stories"
         if self.send:
@@ -84,15 +86,11 @@ class TestModules(unittest.TestCase):
         outputs = self.runConversation(query, inputs, News)
         self.assertTrue("top headlines" in outputs[1])
 
-    @unittest.skipIf(not activeInternet(), "No internet connection")
+    @unittest.skipIf(not diagnose.check_network_connection(),
+                     "No internet connection")
     def testWeather(self):
         query = "what's the weather like tomorrow"
         inputs = []
         outputs = self.runConversation(query, inputs, Weather)
-        self.assertTrue(
-            "can't see that far ahead" in outputs[0]
-            or "Tomorrow" in outputs[0])
-
-
-if __name__ == '__main__':
-    unittest.main()
+        self.assertTrue("can't see that far ahead"
+                        in outputs[0] or "Tomorrow" in outputs[0])

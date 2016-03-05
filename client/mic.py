@@ -1,20 +1,14 @@
+# -*- coding: utf-8-*-
 """
     The Mic class handles all interactions with the microphone and speaker.
 """
-
-import os
-import json
-from wave import open as open_audio
+import logging
+import tempfile
+import wave
 import audioop
 import pyaudio
 import alteration
-
-
-# quirky bug where first import doesn't work
-try:
-    import pocketsphinx as ps
-except:
-    import pocketsphinx as ps
+import jasperpath
 
 
 class Mic:
@@ -22,53 +16,28 @@ class Mic:
     speechRec = None
     speechRec_persona = None
 
-    def __init__(self, lmd, dictd, lmd_persona, dictd_persona, lmd_music=None, dictd_music=None):
+    def __init__(self, speaker, passive_stt_engine, active_stt_engine):
         """
-            Initiates the pocketsphinx instance.
+        Initiates the pocketsphinx instance.
 
-            Arguments:
-            lmd -- filename of the full language model
-            dictd -- filename of the full dictionary (.dic)
-            lmd_persona -- filename of the 'Persona' language model (containing, e.g., 'Jasper')
-            dictd_persona -- filename of the 'Persona' dictionary (.dic)
+        Arguments:
+        speaker -- handles platform-independent audio output
+        passive_stt_engine -- performs STT while Jasper is in passive listen
+                              mode
+        acive_stt_engine -- performs STT while Jasper is in active listen mode
         """
+        self._logger = logging.getLogger(__name__)
+        self.speaker = speaker
+        self.passive_stt_engine = passive_stt_engine
+        self.active_stt_engine = active_stt_engine
+        self._logger.info("Initializing PyAudio. ALSA/Jack error messages " +
+                          "that pop up during this process are normal and " +
+                          "can usually be safely ignored.")
+        self._audio = pyaudio.PyAudio()
+        self._logger.info("Initialization of PyAudio completed.")
 
-        hmdir = "/usr/local/share/pocketsphinx/model/hmm/en_US/hub4wsj_sc_8k"
-
-        if lmd_music and dictd_music:
-            self.speechRec_music = ps.Decoder(hmm = hmdir, lm = lmd_music, dict = dictd_music)
-        self.speechRec_persona = ps.Decoder(
-            hmm=hmdir, lm=lmd_persona, dict=dictd_persona)
-        self.speechRec = ps.Decoder(hmm=hmdir, lm=lmd, dict=dictd)
-
-    def transcribe(self, audio_file_path, PERSONA_ONLY=False, MUSIC=False):
-        """
-            Performs TTS, transcribing an audio file and returning the result.
-
-            Arguments:
-            audio_file_path -- the path to the audio file to-be transcribed
-            PERSONA_ONLY -- if True, uses the 'Persona' language model and dictionary
-            MUSIC -- if True, uses the 'Music' language model and dictionary
-        """
-
-        wavFile = file(audio_file_path, 'rb')
-        wavFile.seek(44)
-
-        if MUSIC:
-            self.speechRec_music.decode_raw(wavFile)
-            result = self.speechRec_music.get_hyp()
-        elif PERSONA_ONLY:
-            self.speechRec_persona.decode_raw(wavFile)
-            result = self.speechRec_persona.get_hyp()
-        else:
-            self.speechRec.decode_raw(wavFile)
-            result = self.speechRec.get_hyp()
-
-        print "==================="
-        print "JASPER: " + result[0]
-        print "==================="
-
-        return result[0]
+    def __del__(self):
+        self._audio.terminate()
 
     def getScore(self, data):
         rms = audioop.rms(data, 2)
@@ -77,26 +46,20 @@ class Mic:
 
     def fetchThreshold(self):
 
-        # TODO: Consolidate all of these variables from the next three
-        # functions
+        # TODO: Consolidate variables from the next three functions
         THRESHOLD_MULTIPLIER = 1.8
-        AUDIO_FILE = "passive.wav"
         RATE = 16000
         CHUNK = 1024
 
         # number of seconds to allow to establish threshold
         THRESHOLD_TIME = 1
 
-        # number of seconds to listen before forcing restart
-        LISTEN_TIME = 10
-
         # prepare recording stream
-        audio = pyaudio.PyAudio()
-        stream = audio.open(format=pyaudio.paInt16,
-                            channels=1,
-                            rate=RATE,
-                            input=True,
-                            frames_per_buffer=CHUNK)
+        stream = self._audio.open(format=pyaudio.paInt16,
+                                  channels=1,
+                                  rate=RATE,
+                                  input=True,
+                                  frames_per_buffer=CHUNK)
 
         # stores the audio data
         frames = []
@@ -115,6 +78,9 @@ class Mic:
             lastN.append(self.getScore(data))
             average = sum(lastN) / len(lastN)
 
+        stream.stop_stream()
+        stream.close()
+
         # this will be the benchmark to cause a disturbance over!
         THRESHOLD = average * THRESHOLD_MULTIPLIER
 
@@ -122,12 +88,11 @@ class Mic:
 
     def passiveListen(self, PERSONA):
         """
-            Listens for PERSONA in everyday sound
-            Times out after LISTEN_TIME, so needs to be restarted
+        Listens for PERSONA in everyday sound. Times out after LISTEN_TIME, so
+        needs to be restarted.
         """
 
         THRESHOLD_MULTIPLIER = 1.8
-        AUDIO_FILE = "passive.wav"
         RATE = 16000
         CHUNK = 1024
 
@@ -138,12 +103,11 @@ class Mic:
         LISTEN_TIME = 10
 
         # prepare recording stream
-        audio = pyaudio.PyAudio()
-        stream = audio.open(format=pyaudio.paInt16,
-                            channels=1,
-                            rate=RATE,
-                            input=True,
-                            frames_per_buffer=CHUNK)
+        stream = self._audio.open(format=pyaudio.paInt16,
+                                  channels=1,
+                                  rate=RATE,
+                                  input=True,
+                                  frames_per_buffer=CHUNK)
 
         # stores the audio data
         frames = []
@@ -185,7 +149,9 @@ class Mic:
         # no use continuing if no flag raised
         if not didDetect:
             print "No disturbance detected"
-            return
+            stream.stop_stream()
+            stream.close()
+            return (None, None)
 
         # cutoff any recording before this disturbance was detected
         frames = frames[-20:]
@@ -200,18 +166,19 @@ class Mic:
         # save the audio data
         stream.stop_stream()
         stream.close()
-        audio.terminate()
-        write_frames = open_audio(AUDIO_FILE, 'wb')
-        write_frames.setnchannels(1)
-        write_frames.setsampwidth(audio.get_sample_size(pyaudio.paInt16))
-        write_frames.setframerate(RATE)
-        write_frames.writeframes(''.join(frames))
-        write_frames.close()
 
-        # check if PERSONA was said
-        transcribed = self.transcribe(AUDIO_FILE, PERSONA_ONLY=True)
+        with tempfile.NamedTemporaryFile(mode='w+b') as f:
+            wav_fp = wave.open(f, 'wb')
+            wav_fp.setnchannels(1)
+            wav_fp.setsampwidth(pyaudio.get_sample_size(pyaudio.paInt16))
+            wav_fp.setframerate(RATE)
+            wav_fp.writeframes(''.join(frames))
+            wav_fp.close()
+            f.seek(0)
+            # check if PERSONA was said
+            transcribed = self.passive_stt_engine.transcribe(f)
 
-        if PERSONA in transcribed:
+        if any(PERSONA in phrase for phrase in transcribed):
             return (THRESHOLD, PERSONA)
 
         return (False, transcribed)
@@ -219,33 +186,38 @@ class Mic:
     def activeListen(self, THRESHOLD=None, LISTEN=True, MUSIC=False):
         """
             Records until a second of silence or times out after 12 seconds
+
+            Returns the first matching string or None
         """
 
-        AUDIO_FILE = "active.wav"
+        options = self.activeListenToAllOptions(THRESHOLD, LISTEN, MUSIC)
+        if options:
+            return options[0]
+
+    def activeListenToAllOptions(self, THRESHOLD=None, LISTEN=True,
+                                 MUSIC=False):
+        """
+            Records until a second of silence or times out after 12 seconds
+
+            Returns a list of the matching options or None
+        """
+
         RATE = 16000
         CHUNK = 1024
         LISTEN_TIME = 12
 
-        # user can request pre-recorded sound
-        if not LISTEN:
-            if not os.path.exists(AUDIO_FILE):
-                return None
-
-            return self.transcribe(AUDIO_FILE)
-
         # check if no threshold provided
-        if THRESHOLD == None:
+        if THRESHOLD is None:
             THRESHOLD = self.fetchThreshold()
 
-        os.system("aplay -D hw:1,0 beep_hi.wav")
+        self.speaker.play(jasperpath.data('audio', 'beep_hi.wav'))
 
         # prepare recording stream
-        audio = pyaudio.PyAudio()
-        stream = audio.open(format=pyaudio.paInt16,
-                            channels=1,
-                            rate=RATE,
-                            input=True,
-                            frames_per_buffer=CHUNK)
+        stream = self._audio.open(format=pyaudio.paInt16,
+                                  channels=1,
+                                  rate=RATE,
+                                  input=True,
+                                  frames_per_buffer=CHUNK)
 
         frames = []
         # increasing the range # results in longer pause after command
@@ -267,30 +239,24 @@ class Mic:
             if average < THRESHOLD * 0.8:
                 break
 
-        os.system("aplay -D hw:1,0 beep_lo.wav")
+        self.speaker.play(jasperpath.data('audio', 'beep_lo.wav'))
 
         # save the audio data
         stream.stop_stream()
         stream.close()
-        audio.terminate()
-        write_frames = open_audio(AUDIO_FILE, 'wb')
-        write_frames.setnchannels(1)
-        write_frames.setsampwidth(audio.get_sample_size(pyaudio.paInt16))
-        write_frames.setframerate(RATE)
-        write_frames.writeframes(''.join(frames))
-        write_frames.close()
 
-        # DO SOME AMPLIFICATION
-        # os.system("sox "+AUDIO_FILE+" temp.wav vol 20dB")
+        with tempfile.SpooledTemporaryFile(mode='w+b') as f:
+            wav_fp = wave.open(f, 'wb')
+            wav_fp.setnchannels(1)
+            wav_fp.setsampwidth(pyaudio.get_sample_size(pyaudio.paInt16))
+            wav_fp.setframerate(RATE)
+            wav_fp.writeframes(''.join(frames))
+            wav_fp.close()
+            f.seek(0)
+            return self.active_stt_engine.transcribe(f)
 
-        if MUSIC:
-            return self.transcribe(AUDIO_FILE, MUSIC=True)
-
-        return self.transcribe(AUDIO_FILE)
-        
-    def say(self, phrase, OPTIONS=" -vdefault+m3 -p 40 -s 160 --stdout > say.wav"):
+    def say(self, phrase,
+            OPTIONS=" -vdefault+m3 -p 40 -s 160 --stdout > say.wav"):
         # alter phrase before speaking
         phrase = alteration.clean(phrase)
-
-        os.system("espeak " + json.dumps(phrase) + OPTIONS)
-        os.system("aplay -D hw:1,0 say.wav")
+        self.speaker.say(phrase)

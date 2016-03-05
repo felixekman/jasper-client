@@ -1,8 +1,9 @@
+# -*- coding: utf-8-*-
 import Queue
+import atexit
 from modules import Gmail
-from apscheduler.scheduler import Scheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 import logging
-logging.basicConfig()
 
 
 class Notifier(object):
@@ -17,15 +18,22 @@ class Notifier(object):
             self.timestamp = self.gather(self.timestamp)
 
     def __init__(self, profile):
+        self._logger = logging.getLogger(__name__)
         self.q = Queue.Queue()
         self.profile = profile
-        self.notifiers = [
-            self.NotificationClient(self.handleEmailNotifications, None),
-        ]
+        self.notifiers = []
 
-        sched = Scheduler()
+        if 'gmail_address' in profile and 'gmail_password' in profile:
+            self.notifiers.append(self.NotificationClient(
+                self.handleEmailNotifications, None))
+        else:
+            self._logger.warning('gmail_address or gmail_password not set ' +
+                                 'in profile, Gmail notifier will not be used')
+
+        sched = BackgroundScheduler(timezone="UTC", daemon=True)
         sched.start()
-        sched.add_interval_job(self.gather, seconds=30)
+        sched.add_job(self.gather, 'interval', seconds=30)
+        atexit.register(lambda: sched.shutdown(wait=False))
 
     def gather(self):
         [client.run() for client in self.notifiers]

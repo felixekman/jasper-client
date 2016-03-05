@@ -1,6 +1,7 @@
+# -*- coding: utf-8-*-
 import datetime
 import re
-from app_utils import getTimezone
+from client.app_utils import getTimezone
 from semantic.dates import DateService
 
 WORDS = ["TIME"]
@@ -13,7 +14,8 @@ def handle(text, mic, profile):
         Arguments:
         text -- user-input, typically transcribed speech
         mic -- used to interact with the user (for both input and output)
-        profile -- contains information related to the user (e.g., phone number)
+        profile -- contains information related to the user (e.g., phone
+                   number)
     """
 
     tz = getTimezone(profile)

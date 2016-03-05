@@ -1,9 +1,12 @@
+# -*- coding: utf-8-*-
 import feedparser
-import app_utils
+from client import app_utils
 import re
 from semantic.numbers import NumberService
 
 WORDS = ["NEWS", "YES", "NO", "FIRST", "SECOND", "THIRD"]
+
+PRIORITY = 3
 
 URL = 'http://news.ycombinator.com'
 
@@ -38,7 +41,8 @@ def handle(text, mic, profile):
         Arguments:
         text -- user-input, typically transcribed speech
         mic -- used to interact with the user (for both input and output)
-        profile -- contains information related to the user (e.g., phone number)
+        profile -- contains information related to the user (e.g., phone
+                   number)
     """
     mic.say("Pulling up the news")
     articles = getTopArticles(maxResults=3)
@@ -57,7 +61,7 @@ def handle(text, mic, profile):
             return [service.parse(w) for w in output]
 
         chosen_articles = extractOrdinals(text)
-        send_all = chosen_articles is [] and app_utils.isPositive(text)
+        send_all = not chosen_articles and app_utils.isPositive(text)
 
         if send_all or chosen_articles:
             mic.say("Sure, just give me a moment")
@@ -81,17 +85,23 @@ def handle(text, mic, profile):
                     if profile['prefers_email']:
                         body += article_link
                     else:
-                        if not app_utils.emailUser(profile, SUBJECT="", BODY=article_link):
-                            mic.say(
-                                "I'm having trouble sending you these articles. Please make sure that your phone number and carrier are correct on the dashboard.")
+                        if not app_utils.emailUser(profile, SUBJECT="",
+                                                   BODY=article_link):
+                            mic.say("I'm having trouble sending you these " +
+                                    "articles. Please make sure that your " +
+                                    "phone number and carrier are correct " +
+                                    "on the dashboard.")
                             return
 
             # if prefers email, we send once, at the end
             if profile['prefers_email']:
                 body += "</ul>"
-                if not app_utils.emailUser(profile, SUBJECT="Your Top Headlines", BODY=body):
-                    mic.say(
-                        "I'm having trouble sending you these articles. Please make sure that your phone number and carrier are correct on the dashboard.")
+                if not app_utils.emailUser(profile,
+                                           SUBJECT="Your Top Headlines",
+                                           BODY=body):
+                    mic.say("I'm having trouble sending you these articles. " +
+                            "Please make sure that your phone number and " +
+                            "carrier are correct on the dashboard.")
                     return
 
             mic.say("All set")
@@ -102,7 +112,8 @@ def handle(text, mic, profile):
 
     if 'phone_number' in profile:
         mic.say("Here are the current top headlines. " + all_titles +
-                ". Would you like me to send you these articles? If so, which?")
+                ". Would you like me to send you these articles? " +
+                "If so, which?")
         handleResponse(mic.activeListen())
 
     else:

@@ -1,11 +1,14 @@
+# -*- coding: utf-8-*-
 import urllib2
 import re
 import random
 from bs4 import BeautifulSoup
-import app_utils
+from client import app_utils
 from semantic.numbers import NumberService
 
 WORDS = ["HACKER", "NEWS", "YES", "NO", "FIRST", "SECOND", "THIRD"]
+
+PRIORITY = 4
 
 URL = 'http://news.ycombinator.com'
 
@@ -48,7 +51,8 @@ def handle(text, mic, profile):
         Arguments:
         text -- user-input, typically transcribed speech
         mic -- used to interact with the user (for both input and output)
-        profile -- contains information related to the user (e.g., phone number)
+        profile -- contains information related to the user (e.g., phone
+                   number)
     """
     mic.say("Pulling up some stories.")
     stories = getTopStories(maxResults=3)
@@ -66,7 +70,7 @@ def handle(text, mic, profile):
             return [service.parse(w) for w in output]
 
         chosen_articles = extractOrdinals(text)
-        send_all = chosen_articles is [] and app_utils.isPositive(text)
+        send_all = not chosen_articles and app_utils.isPositive(text)
 
         if send_all or chosen_articles:
             mic.say("Sure, just give me a moment")
@@ -90,17 +94,24 @@ def handle(text, mic, profile):
                     if profile['prefers_email']:
                         body += article_link
                     else:
-                        if not app_utils.emailUser(profile, SUBJECT="", BODY=article_link):
-                            mic.say(
-                                "I'm having trouble sending you these articles. Please make sure that your phone number and carrier are correct on the dashboard.")
+                        if not app_utils.emailUser(profile, SUBJECT="",
+                                                   BODY=article_link):
+                            mic.say("I'm having trouble sending you these " +
+                                    "articles. Please make sure that your " +
+                                    "phone number and carrier are correct " +
+                                    "on the dashboard.")
                             return
 
             # if prefers email, we send once, at the end
             if profile['prefers_email']:
                 body += "</ul>"
-                if not app_utils.emailUser(profile, SUBJECT="From the Front Page of Hacker News", BODY=body):
-                    mic.say(
-                        "I'm having trouble sending you these articles. Please make sure that your phone number and carrier are correct on the dashboard.")
+                if not app_utils.emailUser(profile,
+                                           SUBJECT="From the Front Page of " +
+                                                   "Hacker News",
+                                           BODY=body):
+                    mic.say("I'm having trouble sending you these articles. " +
+                            "Please make sure that your phone number and " +
+                            "carrier are correct on the dashboard.")
                     return
 
             mic.say("All done.")
@@ -108,14 +119,14 @@ def handle(text, mic, profile):
         else:
             mic.say("OK I will not send any articles")
 
-    if profile['phone_number']:
+    if not profile['prefers_email'] and profile['phone_number']:
         mic.say("Here are some front-page articles. " +
-                all_titles + ". Would you like me to send you these? If so, which?")
+                all_titles + ". Would you like me to send you these? " +
+                "If so, which?")
         handleResponse(mic.activeListen())
 
     else:
-        mic.say(
-            "Here are some front-page articles. " + all_titles)
+        mic.say("Here are some front-page articles. " + all_titles)
 
 
 def isValid(text):
